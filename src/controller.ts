@@ -63,6 +63,13 @@ export class Controller implements vscode.Disposable {
     return !!this.scaffold && path.resolve(uri.fsPath) === path.resolve(this.scaffold.source);
   }
 
+  /** instructions.cpp or a header it includes (claude.hpp, project.hpp): saving any of them should recompile. */
+  isPromptSource(uri: vscode.Uri): boolean {
+    if (!this.scaffold) return false;
+    const file = path.resolve(uri.fsPath);
+    return this.isInstructionsFile(uri) || (path.dirname(file) === path.resolve(this.scaffold.dir) && file.endsWith('.hpp'));
+  }
+
   // --- opening -------------------------------------------------------------
 
   /** Create the scaffold, show instructions.cpp on the left and the panel beside it. */

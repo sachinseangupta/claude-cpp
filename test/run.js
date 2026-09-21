@@ -18,6 +18,7 @@ function project(source) {
   const dir = path.join(root, '.claude-cpp');
   fs.mkdirSync(dir);
   fs.copyFileSync(path.join(ROOT, 'include', 'claude.hpp'), path.join(dir, 'claude.hpp'));
+  fs.copyFileSync(path.join(ROOT, 'templates', 'project.hpp'), path.join(dir, 'project.hpp'));
   fs.writeFileSync(path.join(dir, 'instructions.cpp'), source);
   return { root, source: path.join(dir, 'instructions.cpp'), buildDir: path.join(dir, 'build') };
 }
@@ -29,10 +30,33 @@ test('the starter template compiles and produces a prompt, with warnings for mis
   const p = project(fs.readFileSync(path.join(ROOT, 'templates', 'instructions.cpp'), 'utf8'));
   const r = await build(p);
   assert.equal(r.ok, true, r.message + r.compilerOutput);
-  assert.match(r.prompt, /^# Goal\n/);
-  assert.match(r.prompt, /1\. Read the README/);
+  assert.equal(
+    r.prompt,
+    [
+      '# Goal',
+      'Explain the purpose of this project and the structure of this project.',
+      '',
+      '## Steps, in order',
+      '1. Read the file `README.md`.',
+      '2. Read the directory `src`.',
+      '3. List the main components of this project.',
+      '4. Summarize this project in 3 bullet points.',
+      '',
+      '## Constraints',
+      '- Do not modify this project.',
+      '',
+    ].join('\n'),
+  );
   assert.match(r.runOutput, /warning: File not found: README\.md/);
   assert.match(r.runOutput, /warning: Directory not found: src/);
+});
+
+test('the starter template contains no natural-language string literals', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'templates', 'instructions.cpp'), 'utf8');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  // Only paths (File/Dir arguments) are allowed as strings.
+  const strings = [...code.matchAll(/"([^"]*)"/g)].map((m) => m[1]).filter((t) => !/^(project\.hpp|README\.md|src)$/.test(t));
+  assert.deepEqual(strings, []);
 });
 
 test('existing files and functions raise no warnings; loops generate steps', async () => {
@@ -40,26 +64,152 @@ test('existing files and functions raise no warnings; loops generate steps', asy
 using namespace claude;
 int main() {
   Prompt p;
-  p.goal("g");
-  p.context({File("a.txt"), Function("hello", "a.txt")});
-  for (int i = 1; i <= 3; ++i) p.step("step " + std::to_string(i) + "\\nmore detail");
+  p.goal(Read(File("a.txt")));
+  p.context(File("a.txt"), Function("hello", "a.txt"));
+  for (int i = 0; i < 2; ++i) p.step(Check(Function("hello")));
   return p.emit();
 }`);
   fs.writeFileSync(path.join(p.root, 'a.txt'), 'void hello();');
   const r = await build(p);
-  assert.equal(r.ok, true, r.message);
+  assert.equal(r.ok, true, r.message + r.compilerOutput);
   assert.equal(r.runOutput, '');
-  assert.match(r.prompt, /- Function `hello` in `a\.txt`/);
-  assert.match(r.prompt, /3\. step 3\n {3}more detail/);
+  assert.match(r.prompt, /## Look at first\n- The file `a\.txt`\n- The function `hello` in `a\.txt`\n/);
+  assert.match(r.prompt, /1\. Check the function `hello`\.\n2\. Check the function `hello`\./);
 });
 
 test('a function missing from its file is flagged', async () => {
   const p = project(`#include "claude.hpp"
-int main() { claude::Prompt p; p.goal("g"); p.context(claude::Function("nope", "a.txt")); return p.emit(); }`);
+using namespace claude;
+int main() { Prompt p; p.goal(Read(Function("nope", "a.txt"))); return p.emit(); }`);
   fs.writeFileSync(path.join(p.root, 'a.txt'), 'void hello();');
   const r = await build(p);
-  assert.equal(r.ok, true);
+  assert.equal(r.ok, true, r.message + r.compilerOutput);
   assert.match(r.runOutput, /'nope' does not appear in a\.txt/);
+});
+
+test('actions, formats, conditions and multiple objects are worded by the header', async () => {
+  const p = project(`#include "claude.hpp"
+using namespace claude;
+int main() {
+  Prompt p;
+  p.goal(Fix(Tests(this_project)));
+  p.step(Summarize(this_project).in(Sentences(1)));
+  p.step(Read(File("a.txt"), Dir("d"), this_project));
+  p.step(Run(Tests(this_project)));
+  p.forbid(Remove(PublicApi(this_project)));
+  p.forbid(Add(Dependencies(this_project)));
+  p.accept(Passing(Tests(this_project)));
+  p.accept(Unchanged(PublicApi(this_project)));
+  p.accept(Compiling(this_project));
+  p.note("free text still works");
+  return p.emit();
+}`);
+  fs.writeFileSync(path.join(p.root, 'a.txt'), 'x');
+  fs.mkdirSync(path.join(p.root, 'd'));
+  const r = await build(p);
+  assert.equal(r.ok, true, r.message + r.compilerOutput);
+  assert.equal(r.runOutput, '');
+  assert.equal(
+    r.prompt,
+    [
+      '# Goal',
+      'Fix the tests of this project.',
+      '',
+      '## Steps, in order',
+      '1. Summarize this project in 1 sentence.',
+      '2. Read the file `a.txt`, the directory `d` and this project.',
+      '3. Run the tests of this project.',
+      '',
+      '## Constraints',
+      '- Do not remove the public API of this project.',
+      '- Do not add the dependencies of this project.',
+      '',
+      '## Done when',
+      '- Passing: the tests of this project',
+      '- Unchanged: the public API of this project',
+      '- Compiling: this project',
+      '',
+      '## Notes',
+      '- free text still works',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('project concepts, aspects and verbs defined in project.hpp are usable and carry their locations', async () => {
+  const p = project(`#include "project.hpp"
+namespace claude {
+struct ConfigParser : Subject {
+  ConfigParser() : Subject("the config parser", {File("src/config.cpp"), Function("parse", "src/config.cpp")}) {}
+};
+struct Validation : Aspect {
+  explicit Validation(const Subject& of) : Aspect("input validation", of) {}
+};
+struct Deprecate : Action {
+  template <SubjectLike... S> requires(sizeof...(S) > 0)
+  explicit Deprecate(const S&... what) : Action("deprecate", {what...}) {}
+};
+struct Documented : Condition {
+  explicit Documented(const Subject& what) : Condition("documented", what) {}
+};
+}
+using namespace claude;
+int main() {
+  Prompt p;
+  p.goal(Check(Validation(ConfigParser())));
+  p.step(Read(ConfigParser()));
+  p.step(Deprecate(PublicApi(ConfigParser())));
+  p.forbid(Modify(ConfigParser()));
+  p.accept(Documented(ConfigParser()));
+  return p.emit();
+}`);
+  fs.mkdirSync(path.join(p.root, 'src'));
+  fs.writeFileSync(path.join(p.root, 'src', 'config.cpp'), 'void parse();');
+  const r = await build(p);
+  assert.equal(r.ok, true, r.message + r.compilerOutput);
+  assert.equal(r.runOutput, '');
+  assert.equal(
+    r.prompt,
+    [
+      '# Goal',
+      'Check the input validation of the config parser.',
+      '',
+      '## Look at first',
+      // each mentioned concept is listed once, with where it lives
+      '- The input validation of the config parser (the file `src/config.cpp` and the function `parse` in `src/config.cpp`)',
+      '- The config parser (the file `src/config.cpp` and the function `parse` in `src/config.cpp`)',
+      '- The public API of the config parser (the file `src/config.cpp` and the function `parse` in `src/config.cpp`)',
+      '',
+      '## Steps, in order',
+      '1. Read the config parser.',
+      '2. Deprecate the public API of the config parser.',
+      '',
+      '## Constraints',
+      '- Do not modify the config parser.',
+      '',
+      '## Done when',
+      '- Documented: the config parser',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('a step without an object does not compile', async () => {
+  const p = project(`#include "claude.hpp"
+using namespace claude;
+int main() { Prompt p; p.goal(Read()); return p.emit(); }`);
+  const r = await build(p);
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'compile');
+});
+
+test('a raw string is not accepted where a concept is expected', async () => {
+  const p = project(`#include "claude.hpp"
+using namespace claude;
+int main() { Prompt p; p.goal("Explain the project."); return p.emit(); }`);
+  const r = await build(p);
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'compile');
 });
 
 test('compile errors are reported with line/column and nothing is run', async () => {
@@ -82,7 +232,7 @@ int main() {
 
 test('a stale binary from a previous good build is not run after a failed compile', async () => {
   const p = project(`#include "claude.hpp"
-int main() { claude::Prompt p; p.goal("first"); return p.emit(); }`);
+int main() { claude::Prompt p; p.goal(claude::Read(claude::this_project)); return p.emit(); }`);
   assert.equal((await build(p)).ok, true);
   fs.writeFileSync(p.source, 'int main( { }');
   const r = await build(p);
@@ -132,7 +282,7 @@ test('aborting cancels the build', async () => {
 
 test('the program runs from the project root so relative paths resolve', async () => {
   const p = project(`#include "claude.hpp"
-int main() { claude::Prompt p; p.goal("g"); p.context(claude::File("marker.txt")); return p.emit(); }`);
+int main() { claude::Prompt p; p.goal(claude::Read(claude::File("marker.txt"))); return p.emit(); }`);
   fs.writeFileSync(path.join(p.root, 'marker.txt'), 'x');
   const r = await build(p);
   assert.equal(r.runOutput, '');
@@ -148,13 +298,15 @@ test('scaffold creates the files once and never overwrites user edits', () => {
   const root = tmp();
   const s = ensureScaffold(root, ROOT);
   assert.ok(s.createdSource);
-  for (const f of [s.source, s.header, path.join(s.dir, '.gitignore'), path.join(s.dir, 'compile_flags.txt')]) assert.ok(fs.existsSync(f), f);
+  for (const f of [s.source, s.header, path.join(s.dir, 'project.hpp'), path.join(s.dir, '.gitignore'), path.join(s.dir, 'compile_flags.txt')]) assert.ok(fs.existsSync(f), f);
   fs.writeFileSync(s.source, '// mine');
   fs.writeFileSync(s.header, '// my header');
+  fs.writeFileSync(path.join(s.dir, 'project.hpp'), '// my concepts');
   const again = ensureScaffold(root, ROOT);
   assert.equal(again.createdSource, false);
   assert.equal(fs.readFileSync(s.source, 'utf8'), '// mine');
   assert.equal(fs.readFileSync(s.header, 'utf8'), '// my header');
+  assert.equal(fs.readFileSync(path.join(s.dir, 'project.hpp'), 'utf8'), '// my concepts');
   resetHeader(root, ROOT);
   assert.match(fs.readFileSync(s.header, 'utf8'), /CLAUDE_CPP_HEADER_VERSION/);
 });
@@ -237,7 +389,7 @@ test('LIVE: the real Claude Code CLI answers a compiled prompt', { skip: !proces
   const binary = await resolveClaudeBinary('');
   assert.ok(binary, 'claude CLI not found');
   const p = project(`#include "claude.hpp"
-int main() { claude::Prompt p; p.goal("Reply with exactly the single word: pong"); p.constrain("Do not use any tools."); return p.emit(); }`);
+int main() { using namespace claude; Prompt p; p.goal(Action("reply with", {Subject("exactly the single word: pong")})); p.forbid(Action("use", {Subject("any tools")})); return p.emit(); }`);
   const built = await build(p);
   assert.equal(built.ok, true);
   const events = [];

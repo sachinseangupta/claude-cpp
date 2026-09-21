@@ -77,7 +77,7 @@ printf '{"type":"system","subtype":"init","session_id":"sess-A"}\\n{"type":"resu
   await vscode.commands.executeCommand('claudeCpp.send');
   await until('fake claude received prompt', () => fs.existsSync(captured) && fs.readFileSync(captured, 'utf8').length > 0);
   const sent = fs.readFileSync(captured, 'utf8');
-  assert.match(sent, /^# Goal\nExplain what this project does/);
+  assert.match(sent, /^# Goal\nExplain the purpose of this project/);
   assert.match(fs.readFileSync(captured + '.args', 'utf8'), /--permission-mode acceptEdits/);
   assert.doesNotMatch(fs.readFileSync(captured + '.args', 'utf8'), /--resume/);
 

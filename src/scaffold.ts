@@ -4,6 +4,7 @@ import * as path from 'node:path';
 export const WORK_DIR = '.claude-cpp';
 export const SOURCE_NAME = 'instructions.cpp';
 export const HEADER_NAME = 'claude.hpp';
+export const CONCEPTS_NAME = 'project.hpp';
 
 export interface Scaffold {
   dir: string;
@@ -27,6 +28,8 @@ export function ensureScaffold(root: string, extensionRoot: string): Scaffold {
     createdSource = true;
   }
   if (!fs.existsSync(header)) fs.copyFileSync(path.join(extensionRoot, 'include', HEADER_NAME), header);
+  const concepts = path.join(dir, CONCEPTS_NAME);
+  if (!fs.existsSync(concepts)) fs.copyFileSync(path.join(extensionRoot, 'templates', CONCEPTS_NAME), concepts);
 
   // Ignore the compiled binary; keep instructions.cpp and claude.hpp trackable.
   const ignore = path.join(dir, '.gitignore');
