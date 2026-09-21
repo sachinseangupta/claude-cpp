@@ -1,0 +1,141 @@
+{
+  "name": "claude-cpp",
+  "displayName": "Claude C++",
+  "description": "Write C++ that compiles into instructions for Claude Code. Learn C++ by using it as your interface to your AI assistant.",
+  "version": "0.1.0",
+  "publisher": "sachingupta",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Education"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Compiling and running instructions.cpp executes code, so it is disabled in untrusted workspaces."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeCpp.open",
+        "title": "Open Panel",
+        "category": "Claude C++"
+      },
+      {
+        "command": "claudeCpp.compile",
+        "title": "Compile Instructions",
+        "category": "Claude C++"
+      },
+      {
+        "command": "claudeCpp.send",
+        "title": "Send to Claude",
+        "category": "Claude C++"
+      },
+      {
+        "command": "claudeCpp.newSession",
+        "title": "New Conversation",
+        "category": "Claude C++"
+      },
+      {
+        "command": "claudeCpp.resetHeader",
+        "title": "Reset claude.hpp to Bundled Version",
+        "category": "Claude C++"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "claudeCpp.send",
+        "key": "cmd+alt+enter",
+        "mac": "cmd+alt+enter",
+        "win": "ctrl+alt+enter",
+        "linux": "ctrl+alt+enter",
+        "when": "resourcePath =~ /\\.claude-cpp[\\\\/]instructions\\.cpp$/"
+      }
+    ],
+    "configuration": {
+      "title": "Claude C++",
+      "properties": {
+        "claudeCpp.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the instructions file and the Claude panel whenever a folder is opened."
+        },
+        "claudeCpp.compileOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Recompile instructions.cpp every time it is saved."
+        },
+        "claudeCpp.compiler": {
+          "type": "string",
+          "default": "clang++",
+          "description": "C++ compiler used to build instructions.cpp."
+        },
+        "claudeCpp.cppStandard": {
+          "type": "string",
+          "default": "c++20",
+          "description": "Value passed to the compiler as -std=<value>."
+        },
+        "claudeCpp.extraCompilerFlags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra flags passed to the compiler."
+        },
+        "claudeCpp.claudePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Claude Code CLI. Leave empty to auto-detect (~/.local/bin/claude, Homebrew, or your login shell's PATH)."
+        },
+        "claudeCpp.permissionMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "acceptEdits",
+            "plan",
+            "bypassPermissions"
+          ],
+          "default": "acceptEdits",
+          "description": "Claude Code permission mode for prompts sent from this panel. The panel is non-interactive, so anything not permitted is denied. 'bypassPermissions' lets Claude run any tool without asking."
+        },
+        "claudeCpp.allowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra tools to pre-approve, e.g. \"Bash(git status)\" or \"Bash(npm test)\"."
+        },
+        "claudeCpp.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model alias or name passed to Claude Code (--model). Leave empty for the default."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "npm run build && node test/run.js",
+    "package": "npm run build && vsce package",
+    "test:integration": "npm run build && node test/integration/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}
