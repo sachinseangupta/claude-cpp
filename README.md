@@ -75,7 +75,7 @@ Follow-up sends continue the same Claude Code session; **New conversation** star
 
 ## Files it creates in your project
 
-`.claude-cpp/instructions.cpp` and `project.hpp` (yours — never overwritten), `claude.hpp` (the generic vocabulary and where all the English lives; read it, edit it, or reset it with the *Claude C++: Reset claude.hpp* command), `compile_flags.txt`, `.gitignore` (ignores `build/`).
+`.claude-cpp/instructions.cpp` and `project.hpp` (yours — never overwritten), `claude.hpp` (the generic vocabulary and where all the English lives; read it, edit it, or reset it with the *Claude C++: Reset claude.hpp* command), `compile_flags.txt`, and `.gitignore` (ignores `build/`). If your project uses git, `.claude-cpp/` is also added to the project's own `.gitignore`. To track it instead, put `!.claude-cpp/` in that file; any line that mentions `.claude-cpp` is left alone.
 
 ## Requirements
 

@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const { buildAndRun, parseDiagnostics } = require('../out/compiler');
 const { parseStreamLine, runClaude } = require('../out/claude');
-const { ensureScaffold, resetHeader } = require('../out/scaffold');
+const { ensureScaffold, ensureGitignored, resetHeader } = require('../out/scaffold');
 
 const ROOT = path.resolve(__dirname, '..');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'claude-cpp-test-'));
@@ -309,6 +309,44 @@ test('scaffold creates the files once and never overwrites user edits', () => {
   assert.equal(fs.readFileSync(path.join(s.dir, 'project.hpp'), 'utf8'), '// my concepts');
   resetHeader(root, ROOT);
   assert.match(fs.readFileSync(s.header, 'utf8'), /CLAUDE_CPP_HEADER_VERSION/);
+});
+
+test('.claude-cpp/ is added to the project .gitignore: appended, once, and only for git projects', () => {
+  const read = (root) => fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+
+  // existing .gitignore, no trailing newline: content preserved, entry on its own line
+  let root = tmp();
+  fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/');
+  ensureScaffold(root, ROOT);
+  assert.equal(read(root), 'node_modules/\n.claude-cpp/\n');
+  // opening again does not duplicate it
+  ensureScaffold(root, ROOT);
+  assert.equal(read(root), 'node_modules/\n.claude-cpp/\n');
+
+  // a git repo with no .gitignore gets one
+  root = tmp();
+  fs.mkdirSync(path.join(root, '.git'));
+  ensureScaffold(root, ROOT);
+  assert.equal(read(root), '.claude-cpp/\n');
+
+  // not a git project: no .gitignore is invented
+  root = tmp();
+  ensureScaffold(root, ROOT);
+  assert.equal(fs.existsSync(path.join(root, '.gitignore')), false);
+});
+
+test('an existing decision about .claude-cpp in .gitignore is respected', () => {
+  for (const existing of ['.claude-cpp\n', '/.claude-cpp/\n', '.claude-cpp/*\n', '!.claude-cpp/\n', 'dist/\n!.claude-cpp/project.hpp\n']) {
+    const root = tmp();
+    fs.writeFileSync(path.join(root, '.gitignore'), existing);
+    assert.equal(ensureGitignored(root), false, existing);
+    assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), existing);
+  }
+  // a comment that merely mentions it does not count
+  const root = tmp();
+  fs.writeFileSync(path.join(root, '.gitignore'), '# .claude-cpp is not ignored yet\n');
+  assert.equal(ensureGitignored(root), true);
+  assert.match(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), /\n\.claude-cpp\/\n$/);
 });
 
 // ---------------------------------------------------------------- claude stream parsing
