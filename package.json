@@ -2,7 +2,7 @@
   "name": "claude-cpp",
   "displayName": "Claude C++",
   "description": "Write instructions for Claude Code as C++ or Python that compiles into a prompt. Learn a language by using it as your interface to your AI assistant.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "sachingupta",
   "license": "UNLICENSED",
   "private": true,
