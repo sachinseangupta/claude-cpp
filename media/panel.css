@@ -20,6 +20,21 @@ body {
   border-bottom: 1px solid var(--vscode-panel-border);
 }
 .title { font-weight: 600; margin-right: 4px; }
+
+/* language switch: two buttons that read as one control */
+.seg { display: inline-flex; }
+.seg button {
+  padding: 1px 10px; border-radius: 0; font-size: 12px;
+  color: var(--vscode-foreground); background: transparent; border: 1px solid var(--vscode-panel-border);
+}
+.seg button + button { margin-left: -1px; }
+.seg button:first-child { border-radius: 3px 0 0 3px; }
+.seg button:last-child { border-radius: 0 3px 3px 0; }
+.seg button:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--vscode-toolbar-hoverBackground); }
+.seg button[aria-pressed="true"] {
+  color: var(--vscode-button-foreground); background: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
 .badge {
   font-size: 11px; padding: 1px 8px; border-radius: 10px;
   border: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground);

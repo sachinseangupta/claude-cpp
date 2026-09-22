@@ -5,9 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { buildAndRun, parseDiagnostics } = require('../out/compiler');
+const { buildAndRun, parseDiagnostics, parsePythonError } = require('../out/compiler');
 const { parseStreamLine, runClaude } = require('../out/claude');
-const { ensureScaffold, ensureGitignored, resetHeader } = require('../out/scaffold');
+const { ensureScaffold, ensureGitignored, resetVocabulary } = require('../out/scaffold');
 
 const ROOT = path.resolve(__dirname, '..');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'claude-cpp-test-'));
@@ -24,6 +24,18 @@ function project(source) {
 }
 const build = (p, extra = {}) =>
   buildAndRun({ compiler: 'clang++', standard: 'c++20', extraFlags: [], source: p.source, buildDir: p.buildDir, cwd: p.root, ...extra });
+
+/** Same, for a Python instructions.py. */
+function pyProject(source) {
+  const root = tmp();
+  const dir = path.join(root, '.claude-cpp');
+  fs.mkdirSync(dir);
+  fs.copyFileSync(path.join(ROOT, 'include', 'claude.py'), path.join(dir, 'claude.py'));
+  fs.copyFileSync(path.join(ROOT, 'templates', 'project.py'), path.join(dir, 'project.py'));
+  fs.writeFileSync(path.join(dir, 'instructions.py'), source);
+  return { root, dir, source: path.join(dir, 'instructions.py') };
+}
+const buildPy = (p, extra = {}) => buildAndRun({ language: 'python', python: 'python3', source: p.source, cwd: p.root, ...extra });
 
 // ---------------------------------------------------------------- compiler
 test('the starter template compiles and produces a prompt, with warnings for missing paths', async () => {
@@ -293,22 +305,373 @@ test('parseDiagnostics understands clang output', () => {
   assert.deepEqual(d.map((x) => [x.line, x.column, x.severity]), [[12, 5, 'error'], [3, 1, 'warning'], [3, 1, 'note']]);
 });
 
+// ---------------------------------------------------------------- python
+const STARTER_PROMPT = [
+  '# Goal',
+  'Explain the purpose of this project and the structure of this project.',
+  '',
+  '## Steps, in order',
+  '1. Read the file `README.md`.',
+  '2. Read the directory `src`.',
+  '3. List the main components of this project.',
+  '4. Summarize this project in 3 bullet points.',
+  '',
+  '## Constraints',
+  '- Do not modify this project.',
+  '',
+].join('\n');
+
+test('python: the starter template runs and produces the same prompt as the C++ one, with warnings for missing paths', async () => {
+  const p = pyProject(fs.readFileSync(path.join(ROOT, 'templates', 'instructions.py'), 'utf8'));
+  const r = await buildPy(p);
+  assert.equal(r.ok, true, r.message + r.runOutput);
+  assert.equal(r.prompt, STARTER_PROMPT);
+  assert.match(r.runOutput, /warning: File not found: README\.md/);
+  assert.match(r.runOutput, /warning: Directory not found: src/);
+  assert.match(r.message, /^Ran\./);
+});
+
+test('python: the starter template contains no natural-language string literals', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'templates', 'instructions.py'), 'utf8');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
+  const strings = [...code.matchAll(/"([^"]*)"/g)].map((m) => m[1]).filter((t) => !/^(README\.md|src)$/.test(t));
+  assert.deepEqual(strings, []);
+});
+
+test('python: running leaves no __pycache__ behind', async () => {
+  const p = pyProject('from project import *\np = Prompt()\np.goal(Read(this_project))\np.emit()\n');
+  assert.equal((await buildPy(p)).ok, true);
+  assert.equal(fs.existsSync(path.join(p.dir, '__pycache__')), false);
+});
+
+test('python: existing files and functions raise no warnings; loops generate steps; missing functions are flagged', async () => {
+  const p = pyProject(`from project import *
+p = Prompt()
+p.goal(Read(File("a.txt")))
+p.context(File("a.txt"), Function("hello", "a.txt"))
+for i in range(2):
+    p.step(Check(Function("hello")))
+p.step(Read(Function("nope", "a.txt")))
+p.emit()
+`);
+  fs.writeFileSync(path.join(p.root, 'a.txt'), 'void hello();');
+  const r = await buildPy(p);
+  assert.equal(r.ok, true, r.message + r.runOutput);
+  assert.equal(r.runOutput, "warning: 'nope' does not appear in a.txt\n");
+  assert.match(r.prompt, /## Look at first\n- The file `a\.txt`\n- The function `hello` in `a\.txt`\n/);
+  assert.match(r.prompt, /1\. Check the function `hello`\.\n2\. Check the function `hello`\./);
+});
+
+const ACTIONS_CPP = `#include "claude.hpp"
+using namespace claude;
+int main() {
+  Prompt p;
+  p.goal(Fix(Tests(this_project)));
+  p.step(Summarize(this_project).in(Sentences(1)));
+  p.step(Read(File("a.txt"), Dir("d"), this_project));
+  p.step(Run(Tests(this_project)));
+  p.forbid(Remove(PublicApi(this_project)));
+  p.forbid(Add(Dependencies(this_project)));
+  p.accept(Passing(Tests(this_project)));
+  p.accept(Unchanged(PublicApi(this_project)));
+  p.accept(Compiling(this_project));
+  p.note("free text still works\\nover two lines");
+  return p.emit();
+}`;
+const ACTIONS_PY = `from project import *
+p = Prompt()
+p.goal(Fix(Tests(this_project)))
+p.step(Summarize(this_project).in_(Sentences(1)))
+p.step(Read(File("a.txt"), Dir("d"), this_project))
+p.step(Run(Tests(this_project)))
+p.forbid(Remove(PublicApi(this_project)))
+p.forbid(Add(Dependencies(this_project)))
+p.accept(Passing(Tests(this_project)))
+p.accept(Unchanged(PublicApi(this_project)))
+p.accept(Compiling(this_project))
+p.note("free text still works\\nover two lines")
+p.emit()
+`;
+const ACTIONS_PROMPT = [
+  '# Goal',
+  'Fix the tests of this project.',
+  '',
+  '## Steps, in order',
+  '1. Summarize this project in 1 sentence.',
+  '2. Read the file `a.txt`, the directory `d` and this project.',
+  '3. Run the tests of this project.',
+  '',
+  '## Constraints',
+  '- Do not remove the public API of this project.',
+  '- Do not add the dependencies of this project.',
+  '',
+  '## Done when',
+  '- Passing: the tests of this project',
+  '- Unchanged: the public API of this project',
+  '- Compiling: this project',
+  '',
+  '## Notes',
+  '- free text still works',
+  '  over two lines',
+  '',
+].join('\n');
+
+test('python: actions, formats, conditions and multiple objects are worded by claude.py', async () => {
+  const p = pyProject(ACTIONS_PY);
+  fs.writeFileSync(path.join(p.root, 'a.txt'), 'x');
+  fs.mkdirSync(path.join(p.root, 'd'));
+  const r = await buildPy(p);
+  assert.equal(r.ok, true, r.message + r.runOutput);
+  assert.equal(r.runOutput, '');
+  assert.equal(r.prompt, ACTIONS_PROMPT);
+});
+
+test('the same program in C++ and in Python sends the identical message', async () => {
+  const cpp = project(ACTIONS_CPP);
+  const py = pyProject(ACTIONS_PY);
+  for (const root of [cpp.root, py.root]) {
+    fs.writeFileSync(path.join(root, 'a.txt'), 'x');
+    fs.mkdirSync(path.join(root, 'd'));
+  }
+  const [c, y] = [await build(cpp), await buildPy(py)];
+  assert.equal(c.ok, true, c.message + c.compilerOutput);
+  assert.equal(y.ok, true, y.message + y.runOutput);
+  assert.equal(y.prompt, c.prompt);
+  assert.equal(c.prompt, ACTIONS_PROMPT);
+});
+
+test('python: project concepts, aspects and verbs defined in project.py are usable and carry their locations', async () => {
+  const p = pyProject(`from project import *
+
+class ConfigParser(Subject):
+    def __init__(self):
+        super().__init__("the config parser", [File("src/config.py"), Function("parse", "src/config.py")])
+
+class Validation(Aspect):
+    def __init__(self, of):
+        super().__init__("input validation", of)
+
+class Deprecate(Action):
+    def __init__(self, *what):
+        super().__init__("deprecate", *what)
+
+class Documented(Condition):
+    def __init__(self, what):
+        super().__init__("documented", what)
+
+p = Prompt()
+p.goal(Check(Validation(ConfigParser())))
+p.step(Read(ConfigParser()))
+p.step(Deprecate(PublicApi(ConfigParser())))
+p.forbid(Modify(ConfigParser()))
+p.accept(Documented(ConfigParser()))
+p.emit()
+`);
+  fs.mkdirSync(path.join(p.root, 'src'));
+  fs.writeFileSync(path.join(p.root, 'src', 'config.py'), 'def parse(): pass');
+  const r = await buildPy(p);
+  assert.equal(r.ok, true, r.message + r.runOutput);
+  assert.equal(r.runOutput, '');
+  const where = '(the file `src/config.py` and the function `parse` in `src/config.py`)';
+  assert.equal(
+    r.prompt,
+    [
+      '# Goal',
+      'Check the input validation of the config parser.',
+      '',
+      '## Look at first',
+      `- The input validation of the config parser ${where}`,
+      `- The config parser ${where}`,
+      `- The public API of the config parser ${where}`,
+      '',
+      '## Steps, in order',
+      '1. Read the config parser.',
+      '2. Deprecate the public API of the config parser.',
+      '',
+      '## Constraints',
+      '- Do not modify the config parser.',
+      '',
+      '## Done when',
+      '- Documented: the config parser',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('python: a raw string is rejected where a concept is expected, and the squiggle lands on the call in instructions.py', async () => {
+  const p = pyProject('from project import *\np = Prompt()\np.goal(Explain(this_project))\np.step(Read("the config file"))\np.emit()\n');
+  const r = await buildPy(p);
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'run');
+  assert.match(r.message, /^TypeError: Read\(\) needs a concept .* but got the text 'the config file'/);
+  assert.equal(r.prompt, '');
+  assert.equal(r.diagnostics.length, 1, r.runOutput);
+  assert.equal(r.diagnostics[0].line, 4); // not a line inside claude.py, where the TypeError is raised
+  assert.equal(path.basename(r.diagnostics[0].file), 'instructions.py');
+  assert.equal(r.diagnostics[0].severity, 'error');
+});
+
+test('python: the wrong kind of argument is reported by name for every builder method', async () => {
+  const cases = [
+    ['Read()', /Read\(\) needs at least one thing to act on/],
+    ['Prompt().goal(this_project)', /Prompt\.goal\(\) needs an action .* a value of type Project/],
+    ['Prompt().step("read it")', /Prompt\.step\(\) needs an action/],
+    ['Prompt().accept(Read(this_project))', /Prompt\.accept\(\) needs a condition/],
+    ['Purpose("x")', /Purpose\(\) needs a concept/],
+    ['Summarize(this_project).in_("brief")', /Summarize\.in_\(\) needs a format/],
+    ['Bullets("3")', /Bullet point needs a whole number/],
+  ];
+  for (const [expr, expected] of cases) {
+    const r = await buildPy(pyProject(`from project import *\n${expr}\n`));
+    assert.equal(r.ok, false, expr);
+    assert.match(r.message, expected, expr);
+  }
+});
+
+test('python: a syntax error is a compile-stage failure with the squiggle on the right line', async () => {
+  const p = pyProject('from project import *\np = Prompt()\np.goal(Explain(this_project)\np.emit()\n');
+  const r = await buildPy(p);
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'compile');
+  assert.match(r.message, /^SyntaxError/);
+  assert.equal(r.diagnostics.length, 1, r.runOutput);
+  assert.ok(r.diagnostics[0].line >= 3 && r.diagnostics[0].line <= 4, String(r.diagnostics[0].line));
+  assert.equal(r.prompt, '');
+});
+
+test('python: an error inside project.py is flagged in project.py', async () => {
+  const p = pyProject('from project import *\np = Prompt()\np.goal(Read(this_project))\np.emit()\n');
+  fs.appendFileSync(path.join(p.dir, 'project.py'), '\nundefined_name\n');
+  const r = await buildPy(p);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /^NameError/);
+  assert.equal(path.basename(r.diagnostics[0].file), 'project.py');
+});
+
+test('python: a prompt without a goal fails with a helpful message on the emit() line', async () => {
+  const p = pyProject('from project import *\np = Prompt()\np.emit()\n');
+  const r = await buildPy(p);
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'run');
+  // Python qualifies a custom exception with the module that defines it -- "claude.PromptError", not "PromptError".
+  assert.match(r.message, /^claude\.PromptError: this prompt has no goal/);
+  assert.equal(r.diagnostics[0].line, 3);
+});
+
+test('python: a program that prints nothing is not sendable; sys.exit reports its exit code', async () => {
+  let r = await buildPy(pyProject('x = 1\n'));
+  assert.equal(r.ok, false);
+  assert.match(r.message, /printed nothing/);
+  r = await buildPy(pyProject('import sys\nsys.exit(3)\n'));
+  assert.equal(r.ok, false);
+  assert.match(r.message, /exited with code 3/);
+  assert.deepEqual(r.diagnostics, []);
+});
+
+test('python: an infinite loop is stopped by the run timeout', async () => {
+  const r = await buildPy(pyProject('while True:\n    pass\n'), { runTimeoutMs: 400 });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /longer than 0.4 seconds/);
+});
+
+test('python: a missing interpreter gives an actionable message', async () => {
+  const r = await buildPy(pyProject('print(1)\n'), { python: 'definitely-not-python' });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /Python "definitely-not-python" was not found.*claudeCpp\.python/);
+});
+
+test('python: aborting cancels the run', async () => {
+  const ac = new AbortController();
+  const pending = buildPy(pyProject('import time\ntime.sleep(5)\n'), { signal: ac.signal });
+  ac.abort();
+  assert.equal((await pending).aborted, true);
+});
+
+test('python: the program runs from the project root so relative paths resolve, and can import its neighbours', async () => {
+  const p = pyProject('from project import *\np = Prompt()\np.goal(Read(File("marker.txt")))\np.emit()\n');
+  fs.writeFileSync(path.join(p.root, 'marker.txt'), 'x');
+  const r = await buildPy(p);
+  assert.equal(r.ok, true, r.message + r.runOutput);
+  assert.equal(r.runOutput, '');
+});
+
+test('non-ASCII text survives the trip through Python', async () => {
+  const r = await buildPy(pyProject('from project import *\np = Prompt()\np.goal(Read(File("naïve—日本語.txt")))\np.emit()\n'));
+  assert.equal(r.ok, true, r.message);
+  assert.match(r.prompt, /naïve—日本語\.txt/);
+});
+
+test('parsePythonError picks the innermost user frame, skipping the vocabulary and the standard library', () => {
+  const dir = '/w/.claude-cpp';
+  const tb = [
+    'warning: File not found: x',
+    'Traceback (most recent call last):',
+    '  File "/w/.claude-cpp/instructions.py", line 7, in <module>',
+    '    p.step(Read("x"))',
+    '  File "/w/.claude-cpp/claude.py", line 200, in __init__',
+    '    raise TypeError(...)',
+    'TypeError: Read() needs a concept',
+  ].join('\n');
+  assert.deepEqual(parsePythonError(tb, dir, 'claude.py'), {
+    message: 'TypeError: Read() needs a concept',
+    syntax: false,
+    diagnostics: [{ file: '/w/.claude-cpp/instructions.py', line: 7, column: 1, severity: 'error', message: 'TypeError: Read() needs a concept' }],
+  });
+
+  const stdlib = ['Traceback (most recent call last):', '  File "/w/.claude-cpp/instructions.py", line 2, in <module>', '  File "/usr/lib/python3/json/__init__.py", line 9, in load', 'ValueError: bad'].join('\n');
+  assert.equal(parsePythonError(stdlib, dir, 'claude.py').diagnostics[0].line, 2);
+
+  const syntax = ['  File "/w/.claude-cpp/instructions.py", line 3', '    p.goal(', '          ^', 'SyntaxError: \'(\' was never closed'].join('\n');
+  assert.equal(parsePythonError(syntax, dir, 'claude.py').syntax, true);
+
+  assert.equal(parsePythonError('warning: something\n', dir, 'claude.py'), undefined); // no traceback: not an exception
+});
+
 // ---------------------------------------------------------------- scaffold
 test('scaffold creates the files once and never overwrites user edits', () => {
   const root = tmp();
   const s = ensureScaffold(root, ROOT);
   assert.ok(s.createdSource);
-  for (const f of [s.source, s.header, path.join(s.dir, 'project.hpp'), path.join(s.dir, '.gitignore'), path.join(s.dir, 'compile_flags.txt')]) assert.ok(fs.existsSync(f), f);
+  for (const f of [s.source, s.vocabulary, path.join(s.dir, 'project.hpp'), path.join(s.dir, '.gitignore'), path.join(s.dir, 'compile_flags.txt')]) assert.ok(fs.existsSync(f), f);
   fs.writeFileSync(s.source, '// mine');
-  fs.writeFileSync(s.header, '// my header');
+  fs.writeFileSync(s.vocabulary, '// my header');
   fs.writeFileSync(path.join(s.dir, 'project.hpp'), '// my concepts');
   const again = ensureScaffold(root, ROOT);
   assert.equal(again.createdSource, false);
   assert.equal(fs.readFileSync(s.source, 'utf8'), '// mine');
-  assert.equal(fs.readFileSync(s.header, 'utf8'), '// my header');
+  assert.equal(fs.readFileSync(s.vocabulary, 'utf8'), '// my header');
   assert.equal(fs.readFileSync(path.join(s.dir, 'project.hpp'), 'utf8'), '// my concepts');
-  resetHeader(root, ROOT);
-  assert.match(fs.readFileSync(s.header, 'utf8'), /CLAUDE_CPP_HEADER_VERSION/);
+  resetVocabulary(root, ROOT);
+  assert.match(fs.readFileSync(s.vocabulary, 'utf8'), /CLAUDE_CPP_HEADER_VERSION/);
+});
+
+test('python scaffold creates its own files beside the C++ ones, once, and never overwrites user edits', () => {
+  const root = tmp();
+  const s = ensureScaffold(root, ROOT, 'python');
+  assert.equal(s.language, 'python');
+  assert.ok(s.createdSource);
+  assert.equal(path.basename(s.source), 'instructions.py');
+  assert.equal(path.basename(s.vocabulary), 'claude.py');
+  for (const f of [s.source, s.vocabulary, path.join(s.dir, 'project.py'), path.join(s.dir, '.gitignore')]) assert.ok(fs.existsSync(f), f);
+  // starting in Python does not litter the folder with C++ files
+  for (const f of ['instructions.cpp', 'claude.hpp', 'project.hpp', 'compile_flags.txt']) assert.equal(fs.existsSync(path.join(s.dir, f)), false, f);
+  assert.match(fs.readFileSync(path.join(s.dir, '.gitignore'), 'utf8'), /__pycache__/);
+
+  fs.writeFileSync(s.source, '# mine');
+  fs.writeFileSync(path.join(s.dir, 'project.py'), '# my concepts');
+  // switching to C++ adds its files and leaves the Python ones alone; switching back is a no-op
+  const cpp = ensureScaffold(root, ROOT, 'cpp');
+  assert.ok(cpp.createdSource);
+  assert.ok(fs.existsSync(path.join(s.dir, 'compile_flags.txt')));
+  const again = ensureScaffold(root, ROOT, 'python');
+  assert.equal(again.createdSource, false);
+  assert.equal(fs.readFileSync(s.source, 'utf8'), '# mine');
+  assert.equal(fs.readFileSync(path.join(s.dir, 'project.py'), 'utf8'), '# my concepts');
+
+  fs.writeFileSync(s.vocabulary, '# broken');
+  resetVocabulary(root, ROOT, 'python');
+  assert.match(fs.readFileSync(s.vocabulary, 'utf8'), /CLAUDE_PY_HEADER_VERSION/);
+  assert.match(fs.readFileSync(cpp.vocabulary, 'utf8'), /CLAUDE_CPP_HEADER_VERSION/); // the other language's file is untouched
 });
 
 test('.claude-cpp/ is added to the project .gitignore: appended, once, and only for git projects', () => {

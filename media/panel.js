@@ -9,14 +9,19 @@
     chat: $('chat'), empty: $('empty'),
   };
   let busy = false;
+  let language = 'cpp';
 
-  const post = (type) => vscode.postMessage({ type });
+  const post = (type, extra) => vscode.postMessage({ type, ...extra });
   $('btn-compile').addEventListener('click', () => post('compile'));
   $('btn-new').addEventListener('click', () => post('new-session'));
   $('btn-source').addEventListener('click', () => post('open-source'));
-  $('btn-header').addEventListener('click', () => post('open-header'));
+  $('btn-vocabulary').addEventListener('click', () => post('open-vocabulary'));
   el.send.addEventListener('click', () => post('send'));
   el.stop.addEventListener('click', () => post('stop'));
+  const langButtons = document.querySelectorAll('.seg button');
+  langButtons.forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.language !== language) post('set-language', { language: b.dataset.language });
+  }));
 
   // ---- small, safe markdown renderer (input is escaped before any tags are added) ----
   function esc(s) {
@@ -66,16 +71,38 @@
   }
 
   // ---- state ----
-  const LABELS = { idle: 'idle', compiling: 'compiling', ok: 'compiled', error: 'error', untrusted: 'untrusted' };
+  // C++ is compiled and then run; Python is just run.
+  const LANGS = {
+    cpp: { name: 'C++', run: 'Compile', runTitle: 'Compile and run', ok: 'compiled', busy: 'compiling' },
+    python: { name: 'Python', run: 'Run', runTitle: 'Run', ok: 'ready', busy: 'running' },
+  };
+  const langInfo = () => LANGS[language] || LANGS.cpp;
+  const emptyText = () => 'Write your instructions in ' + langInfo().name + ", save, then send. Claude's replies appear here.";
 
   function setBlock(node, text) {
     node.hidden = !text;
     node.textContent = text || '';
   }
 
+  function applyLanguage(s) {
+    language = LANGS[s.language] ? s.language : 'cpp';
+    const info = langInfo();
+    langButtons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.language === language)));
+    $('btn-source').textContent = s.sourceName;
+    $('btn-source').title = 'Open ' + s.sourceName;
+    $('btn-vocabulary').textContent = s.vocabularyName;
+    $('btn-vocabulary').title = 'Open ' + s.vocabularyName;
+    $('btn-compile').textContent = info.run;
+    $('btn-compile').title = info.runTitle + ' ' + s.sourceName;
+    if (el.empty) el.empty.textContent = emptyText();
+  }
+
   function applyState(s) {
     busy = s.busy;
-    el.status.textContent = LABELS[s.status] || s.status;
+    applyLanguage(s);
+    const info = langInfo();
+    const labels = { idle: 'idle', compiling: info.busy, ok: info.ok, error: 'error', untrusted: 'untrusted' };
+    el.status.textContent = labels[s.status] || s.status;
     el.status.dataset.status = s.status;
     el.compileMsg.textContent = s.message || '';
     // On failure the compiler output is what matters; otherwise show the prompt.
@@ -108,7 +135,8 @@
   function addChat(entry) {
     if (entry.role === 'you') {
       const wrap = node('div', 'msg you');
-      wrap.appendChild(node('div', 'who', 'You · compiled from C++'));
+      const from = LANGS[entry.language] || LANGS.cpp;
+      wrap.appendChild(node('div', 'who', 'You · ' + (entry.language === 'python' ? 'run from ' : 'compiled from ') + from.name));
       const d = document.createElement('details');
       const first = (entry.text.split('\n').find((l) => l.trim() && !l.startsWith('#')) || 'prompt').trim();
       d.appendChild(node('summary', '', first.length > 90 ? first.slice(0, 87) + '…' : first));
@@ -158,7 +186,7 @@
     else if (m.type === 'chat') addChat(m.entry);
     else if (m.type === 'chat-reset') {
       el.chat.textContent = '';
-      el.empty = node('div', 'dim', "Write your instructions in C++, save, then send. Claude's replies appear here.", 'empty');
+      el.empty = node('div', 'dim', emptyText(), 'empty');
       el.chat.appendChild(el.empty);
     }
   });

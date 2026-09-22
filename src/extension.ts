@@ -9,7 +9,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claudeCpp.compile', () => controller.compile()),
     vscode.commands.registerCommand('claudeCpp.send', () => controller.send()),
     vscode.commands.registerCommand('claudeCpp.newSession', () => controller.newSession()),
-    vscode.commands.registerCommand('claudeCpp.resetHeader', () => controller.resetHeader()),
+    vscode.commands.registerCommand('claudeCpp.resetHeader', () => controller.resetVocabulary()),
+    vscode.commands.registerCommand('claudeCpp.setLanguage', (language?: unknown) => controller.pickLanguage(language)),
     vscode.workspace.onDidSaveTextDocument((doc) => {
       if (controller.isPromptSource(doc.uri) && vscode.workspace.getConfiguration('claudeCpp').get<boolean>('compileOnSave', true)) {
         void controller.compile();

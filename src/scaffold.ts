@@ -1,15 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Language, LANGUAGES } from './language';
 
 export const WORK_DIR = '.claude-cpp';
-export const SOURCE_NAME = 'instructions.cpp';
-export const HEADER_NAME = 'claude.hpp';
-export const CONCEPTS_NAME = 'project.hpp';
 
 export interface Scaffold {
+  language: Language;
   dir: string;
   source: string;
-  header: string;
+  vocabulary: string;
   buildDir: string;
   createdSource: boolean;
 }
@@ -34,38 +33,45 @@ export function ensureGitignored(root: string): boolean {
   return true;
 }
 
-/** Create <root>/.claude-cpp/ with the starter files. Never overwrites existing files. */
-export function ensureScaffold(root: string, extensionRoot: string): Scaffold {
+/**
+ * Create <root>/.claude-cpp/ with the starter files for one language. Never overwrites existing files.
+ * The languages live side by side, so switching to one for the first time only adds its files.
+ */
+export function ensureScaffold(root: string, extensionRoot: string, language: Language = 'cpp'): Scaffold {
+  const lang = LANGUAGES[language];
   const dir = path.join(root, WORK_DIR);
-  const source = path.join(dir, SOURCE_NAME);
-  const header = path.join(dir, HEADER_NAME);
+  const source = path.join(dir, lang.source);
+  const vocabulary = path.join(dir, lang.vocabulary);
   const buildDir = path.join(dir, 'build');
   fs.mkdirSync(dir, { recursive: true });
 
   let createdSource = false;
   if (!fs.existsSync(source)) {
-    fs.copyFileSync(path.join(extensionRoot, 'templates', SOURCE_NAME), source);
+    fs.copyFileSync(path.join(extensionRoot, 'templates', lang.source), source);
     createdSource = true;
   }
-  if (!fs.existsSync(header)) fs.copyFileSync(path.join(extensionRoot, 'include', HEADER_NAME), header);
-  const concepts = path.join(dir, CONCEPTS_NAME);
-  if (!fs.existsSync(concepts)) fs.copyFileSync(path.join(extensionRoot, 'templates', CONCEPTS_NAME), concepts);
+  if (!fs.existsSync(vocabulary)) fs.copyFileSync(path.join(extensionRoot, 'include', lang.vocabulary), vocabulary);
+  const concepts = path.join(dir, lang.concepts);
+  if (!fs.existsSync(concepts)) fs.copyFileSync(path.join(extensionRoot, 'templates', lang.concepts), concepts);
 
-  // Ignore the compiled binary even if the project's own .gitignore is not used or gets edited.
+  // Ignore the compiled binary (and Python's bytecode) even if the project's own .gitignore is not used or gets edited.
   const ignore = path.join(dir, '.gitignore');
-  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, 'build/\n');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, 'build/\n__pycache__/\n');
   ensureGitignored(root);
 
   // Helps clangd / other tooling find the header and language standard.
-  const flags = path.join(dir, 'compile_flags.txt');
-  if (!fs.existsSync(flags)) fs.writeFileSync(flags, '-std=c++20\n-I.\n');
+  if (language === 'cpp') {
+    const flags = path.join(dir, 'compile_flags.txt');
+    if (!fs.existsSync(flags)) fs.writeFileSync(flags, '-std=c++20\n-I.\n');
+  }
 
-  return { dir, source, header, buildDir, createdSource };
+  return { language, dir, source, vocabulary, buildDir, createdSource };
 }
 
-export function resetHeader(root: string, extensionRoot: string): string {
-  const target = path.join(root, WORK_DIR, HEADER_NAME);
+export function resetVocabulary(root: string, extensionRoot: string, language: Language = 'cpp'): string {
+  const name = LANGUAGES[language].vocabulary;
+  const target = path.join(root, WORK_DIR, name);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(path.join(extensionRoot, 'include', HEADER_NAME), target);
+  fs.copyFileSync(path.join(extensionRoot, 'include', name), target);
   return target;
 }

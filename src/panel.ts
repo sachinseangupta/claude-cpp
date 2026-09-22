@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { isLanguage, Language } from './language';
 
 export interface PanelHandlers {
   onReady(): void;
@@ -6,8 +7,9 @@ export interface PanelHandlers {
   onSend(): void;
   onStop(): void;
   onNewSession(): void;
+  onSetLanguage(language: Language): void;
   onOpenSource(): void;
-  onOpenHeader(): void;
+  onOpenVocabulary(): void;
   onDispose(): void;
 }
 
@@ -25,15 +27,16 @@ export class ClaudePanel implements vscode.Disposable {
     this.panel.iconPath = vscode.Uri.joinPath(mediaRoot, 'icon.svg');
     this.panel.webview.html = this.html(mediaRoot);
 
-    this.panel.webview.onDidReceiveMessage((m: { type: string }) => {
+    this.panel.webview.onDidReceiveMessage((m: { type: string; language?: unknown }) => {
       switch (m.type) {
         case 'ready': return handlers.onReady();
         case 'compile': return handlers.onCompile();
         case 'send': return handlers.onSend();
         case 'stop': return handlers.onStop();
         case 'new-session': return handlers.onNewSession();
+        case 'set-language': return isLanguage(m.language) ? handlers.onSetLanguage(m.language) : undefined;
         case 'open-source': return handlers.onOpenSource();
-        case 'open-header': return handlers.onOpenHeader();
+        case 'open-vocabulary': return handlers.onOpenVocabulary();
       }
     });
     this.panel.onDidDispose(() => handlers.onDispose());
@@ -67,11 +70,15 @@ export class ClaudePanel implements vscode.Disposable {
 <body>
   <div id="app">
     <header class="bar">
-      <span class="title">Claude <span class="dim">·</span> C++</span>
+      <span class="title">Claude</span>
+      <div class="seg" role="group" aria-label="Language your instructions are written in">
+        <button id="lang-cpp" data-language="cpp" aria-pressed="true" title="Write instructions in C++">C++</button>
+        <button id="lang-python" data-language="python" aria-pressed="false" title="Write instructions in Python">Python</button>
+      </div>
       <span id="status" class="badge" data-status="idle">…</span>
       <span class="spacer"></span>
       <button id="btn-source" class="ghost" title="Open instructions.cpp">instructions.cpp</button>
-      <button id="btn-header" class="ghost" title="Open claude.hpp">claude.hpp</button>
+      <button id="btn-vocabulary" class="ghost" title="Open claude.hpp">claude.hpp</button>
       <button id="btn-compile" class="ghost" title="Compile and run instructions.cpp">Compile</button>
       <button id="btn-new" class="ghost" title="Forget the conversation and start fresh">New conversation</button>
     </header>

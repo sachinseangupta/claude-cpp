@@ -1,7 +1,7 @@
 {
   "name": "claude-cpp",
   "displayName": "Claude C++",
-  "description": "Write C++ that compiles into instructions for Claude Code. Learn C++ by using it as your interface to your AI assistant.",
+  "description": "Write instructions for Claude Code as C++ or Python that compiles into a prompt. Learn a language by using it as your interface to your AI assistant.",
   "version": "0.1.0",
   "publisher": "sachingupta",
   "license": "UNLICENSED",
@@ -20,7 +20,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Compiling and running instructions.cpp executes code, so it is disabled in untrusted workspaces."
+      "description": "Compiling and running instructions.cpp / instructions.py executes code, so it is disabled in untrusted workspaces."
     }
   },
   "contributes": {
@@ -32,7 +32,7 @@
       },
       {
         "command": "claudeCpp.compile",
-        "title": "Compile Instructions",
+        "title": "Compile / Run Instructions",
         "category": "Claude C++"
       },
       {
@@ -46,8 +46,13 @@
         "category": "Claude C++"
       },
       {
+        "command": "claudeCpp.setLanguage",
+        "title": "Switch Instruction Language (C++ / Python)",
+        "category": "Claude C++"
+      },
+      {
         "command": "claudeCpp.resetHeader",
-        "title": "Reset claude.hpp to Bundled Version",
+        "title": "Reset claude.hpp / claude.py to Bundled Version",
         "category": "Claude C++"
       }
     ],
@@ -58,7 +63,7 @@
         "mac": "cmd+alt+enter",
         "win": "ctrl+alt+enter",
         "linux": "ctrl+alt+enter",
-        "when": "resourcePath =~ /\\.claude-cpp[\\\\/]instructions\\.cpp$/"
+        "when": "resourcePath =~ /\\.claude-cpp[\\\\/]instructions\\.(cpp|py)$/"
       }
     ],
     "configuration": {
@@ -91,6 +96,11 @@
           },
           "default": [],
           "description": "Extra flags passed to the compiler."
+        },
+        "claudeCpp.python": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python interpreter used to run instructions.py (command name or full path)."
         },
         "claudeCpp.claudePath": {
           "type": "string",

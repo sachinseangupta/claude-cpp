@@ -111,5 +111,23 @@ printf '{"type":"system","subtype":"init","session_id":"sess-A"}\\n{"type":"resu
   await vscode.commands.executeCommand('claudeCpp.resetHeader');
   assert.match(fs.readFileSync(path.join(dir, 'claude.hpp'), 'utf8'), /CLAUDE_CPP_HEADER_VERSION/);
 
+  step('switching to Python creates its scaffold, shows instructions.py, and Send runs it');
+  const pySource = path.join(dir, 'instructions.py');
+  await vscode.commands.executeCommand('claudeCpp.setLanguage', 'python');
+  await until('python scaffold', () => fs.existsSync(pySource) && fs.existsSync(path.join(dir, 'claude.py')));
+  await until('instructions.py active in editor', () => vscode.window.activeTextEditor?.document.uri.fsPath === pySource);
+  await sleep(500);
+  fs.rmSync(captured, { force: true });
+  fs.rmSync(captured + '.args', { force: true });
+  await vscode.commands.executeCommand('claudeCpp.send');
+  await until('fake claude received the python-rendered prompt', () => fs.existsSync(captured) && fs.readFileSync(captured, 'utf8').length > 0);
+  assert.match(fs.readFileSync(captured, 'utf8'), /^# Goal\nExplain the purpose of this project/);
+  // the C++ files are untouched and still there for switching back
+  assert.ok(fs.existsSync(source));
+
+  step('switching back to C++ shows instructions.cpp again');
+  await vscode.commands.executeCommand('claudeCpp.setLanguage', 'cpp');
+  await until('instructions.cpp active in editor', () => vscode.window.activeTextEditor?.document.uri.fsPath === source);
+
   await cfg.update('claudePath', undefined, vscode.ConfigurationTarget.Global);
 };
